@@ -1,6 +1,6 @@
 """
 Energy Efficiency 데이터셋 전처리 스크립트
-데이터: UCI Energy Efficiency (ENB2012_data.xlsx)
+데이터: UCI Energy Efficiency (ENB2012_data.csv)
 설명: docs/dataset_description.md 참고
 """
 
