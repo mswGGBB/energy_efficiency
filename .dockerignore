@@ -1,0 +1,9 @@
+.git
+**/__pycache__
+scripts/results_up00_update.csv
+scripts/resstock_sample.csv
+scripts/resstock_sample_v2.csv
+models
+docs
+members
+api/model.pkl
