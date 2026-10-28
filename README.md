@@ -93,10 +93,11 @@
   "mode": "simple",
   "heating_mbtu_per_year": 4.95,
   "cooling_mbtu_per_year": 36.42,
-  "heating_kwh_per_year": 1451,
-  "cooling_kwh_per_year": 10673,
+  "heating_kwh_per_year": 1449,
+  "cooling_kwh_per_year": 10675,
   "validation_r2": {"heating": 0.734, "cooling": 0.737},
-  "note": "간편 모드는 입력이 적어 참고용입니다(검증 R² 약 0.73). 정확한 값은 detail 모드를 사용하세요."
+  "note": "간편 모드는 입력이 적어 참고용입니다(검증 R² 약 0.73). 정확한 값은 detail 모드를 사용하세요.",
+  "request_id": "27d3f534bb0442cfbdaa79ef336400c4"
 }
 ```
 
@@ -115,10 +116,14 @@
 ```bash
 python -m pip install -r api/requirements.txt
 python scripts/resstock_train.py     # 처음 한 번: 모델 학습 (models/*.joblib 생성)
-python api/test_local.py             # 정상 3 + 오류 7 + 사용법 1 = 11건, 11/11 통과 확인
+python api/test_local.py             # API 11건 + 피드백 오류 2건 + 로그 형식 3건 = 16건, 16/16 통과 확인
 ```
 
 > `models/*.joblib`은 학습할 때 쓴 scikit-learn 버전에서만 열립니다. 로드 오류(500)가 나면 `python scripts/resstock_train.py`를 다시 실행하세요.
+
+## 🧾 로그 (재학습·강화학습용)
+
+요청마다 JSON 한 줄(`predict` / `predict_error` / `feedback`)을 남기고, Lambda에서는 CloudWatch Logs에 자동으로 쌓입니다. 예측 응답의 `request_id`로 나중에 실제값을 보내면(`{"feedback": {"request_id": ..., "actual_heating_mbtu": ..., "actual_cooling_mbtu": ...}}`) 입력·예측·정답이 이어져 재학습 데이터가 됩니다. 필드 설명, S3 내보내기 절차, 정리 방법은 [`docs/logging.md`](docs/logging.md), 형식 예시는 `docs/sample_logs.jsonl`, 변환은 `scripts/logs_to_training.py`.
 
 ## 🖥️ 입력 화면 (로컬)
 
@@ -147,18 +152,34 @@ energy_efficiency/
 │   ├── extract_resstock_v2.py   # 원본 CSV에서 60개 컬럼, 8% 추출
 │   ├── resstock_prep.py         # 학습표 만들기 (단위 변환, 파생 변수)
 │   ├── resstock_train.py        # 학습·평가·모델 저장
-│   └── resstock_predict.py      # 입력 검증 + 예측
+│   ├── resstock_predict.py      # 입력 검증 + 예측
+│   └── logs_to_training.py      # 내보낸 로그 -> 재학습용 표
 ├── data/resstock_sample_v2.csv.gz   # 추출한 샘플 (학습에 사용)
 ├── models/                      # resstock_{detail,simple}.joblib
 ├── docs/                        # 결과·입력 항목 설명, 지표 JSON
 ├── api/
 │   ├── lambda_function.py       # Lambda 핸들러
 │   ├── server.py                # 로컬 테스트용 Flask 서버
-│   ├── test_local.py            # 로컬 테스트 11건
+│   ├── test_local.py            # 로컬 테스트 16건
 │   ├── Dockerfile               # 배포용 컨테이너 이미지 (빌드 중 재학습)
 │   └── requirements.txt
 ├── web/                         # 입력 화면 (index.html, app.js)
 ├── members/                     # 팀원별 소개
 ├── .dockerignore
 └── README.md
+```
 
+초기 UCI 실험 파일(`preprocessing.py`, `model.py`, `ENB2012_*` 등)이 남아 있다면 참고용 기록이며, 현재 서비스는 위 구조를 사용합니다.
+
+## 🗺️ 진행 상황
+
+- [x] 데이터 선정·전처리 (UCI → ResStock로 교체)
+- [x] 모델 학습·검증 (상세 R² 0.94/0.92)
+- [x] API 구현, 로컬 테스트 16/16, 검증 데이터 1,500건 확인
+- [x] 요청 로그(JSON)와 피드백 기록 구현 (로컬 확인)
+- [x] 입력 화면 (로컬에서 동작 확인)
+- [ ] AWS 배포: CloudShell 빌드 → ECR → Lambda 함수 URL
+- [ ] 배포 후 정상·오류 요청 확인과 증거 캡처
+- [ ] CloudWatch에 로그가 쌓이는지 확인, 로그 스트림 하나를 S3로 내보내기
+- [ ] 실습 후 자원 정리 (Lambda, ECR, 로그 그룹)
+- [ ] 간편 모드 정확도 개선, 공동주택 오차 개선

@@ -28,8 +28,16 @@ CASES = [
     ("오류: 평수가 학습 범위 밖 (3평)", {"body": json.dumps(dict(SIMPLE, area_pyeong=3))}, 400),
     ("오류: 평수가 숫자가 아님", {"body": json.dumps(dict(SIMPLE, area_pyeong="스물네평"))}, 400),
     ("오류: mode 값이 잘못됨", {"body": json.dumps(dict(SIMPLE, mode="fast"))}, 400),
+    ("오류: 피드백에 request_id 없음", {"body": json.dumps({"feedback": {"actual_heating_mbtu": 5}})}, 400),
+    ("오류: 피드백 실제값이 음수", {"body": json.dumps({"feedback": {"request_id": "x", "actual_heating_mbtu": -1}})}, 400),
     ("사용법 조회 (GET)", {"requestContext": {"http": {"method": "GET"}}}, 200),
 ]
+
+import io, logging  # noqa: E401
+from lambda_function import LOG  # noqa: E402
+
+buf = io.StringIO()
+LOG.addHandler(logging.StreamHandler(buf))      # 남는 로그를 따로 모아 형식을 검사 (화면에는 그대로도 출력됨)
 
 ok = 0
 for name, event, expect in CASES:
@@ -41,4 +49,20 @@ for name, event, expect in CASES:
     if name.startswith("사용법"):
         brief = {"required_inputs": {k: len(v) for k, v in body["required_inputs"].items()}}
     print(f"[{'통과' if passed else '실패'}] {name}: 상태 {res['statusCode']} (기대 {expect}) {json.dumps(brief, ensure_ascii=False)[:150]}")
-print(f"\n{ok}/{len(CASES)} 통과")
+total = len(CASES)
+
+# 로그 확인: 예측 -> request_id 를 받아 -> 피드백을 보내면 같은 request_id 로 로그가 이어져야 함
+res = lambda_handler({"body": json.dumps(DETAIL)}, None)
+rid = json.loads(res["body"]).get("request_id")
+fb = lambda_handler({"body": json.dumps({"feedback": {"request_id": rid, "actual_heating_mbtu": 5.0, "actual_cooling_mbtu": 30.0}})}, None)
+records = [json.loads(l) for l in buf.getvalue().splitlines() if l.startswith("{")]
+pred_log = [r for r in records if r["event"] == "predict" and r["request_id"] == rid]
+fb_log = [r for r in records if r["event"] == "feedback" and r["feedback"]["request_id"] == rid]
+need = {"event", "request_id", "ts", "status", "latency_ms", "mode", "inputs", "prediction", "validation_r2", "model_version"}
+for name, passed in [("로그: 예측 기록에 필요한 필드가 모두 있음", bool(pred_log) and need <= set(pred_log[0])),
+                     ("로그: 입력 27개가 그대로 기록됨", bool(pred_log) and len(pred_log[0]["inputs"]) == 27),
+                     ("로그: 피드백이 같은 request_id 로 기록됨", fb["statusCode"] == 200 and len(fb_log) == 1)]:
+    total += 1
+    ok += passed
+    print(f"[{'통과' if passed else '실패'}] {name}")
+print(f"\n{ok}/{total} 통과")
