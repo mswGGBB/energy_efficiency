@@ -1,0 +1,46 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 중복 배포 방지: 배포가 진행 중이면 다음 배포는 끝날 때까지 대기
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: SSH 설정
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/key.pem
+          chmod 600 ~/.ssh/key.pem
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+
+      - name: EC2에서 최신 코드 받고 다시 빌드/실행
+        run: |
+          ssh -i ~/.ssh/key.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'REMOTE'
+            set -e
+            cd ~/${{ vars.EC2_APP_DIR || 'energy_efficiency' }}
+            git fetch origin main
+            git reset --hard origin/main
+            # 같은 서비스 이름의 컨테이너를 새 이미지로 교체 -> 중복으로 안 뜸
+            docker compose up --build -d --remove-orphans
+            docker image prune -f
+            docker compose ps
+          REMOTE
+
+      - name: 정상 동작 확인
+        run: |
+          for i in $(seq 1 18); do
+            if curl -sf http://${{ secrets.EC2_HOST }}/ > /dev/null; then
+              echo "OK: 웹 응답 확인"; exit 0
+            fi
+            echo "대기 중... ($i)"; sleep 5
+          done
+          echo "헬스체크 실패"; exit 1
