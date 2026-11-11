@@ -3,6 +3,7 @@
 - 학습(resstock_train.py)과 예측(resstock_predict.py)이 같은 규칙을 쓰도록 한 파일에 모았습니다.
 - 단위: 면적은 '평'(1평 = 35.58 ft²), 부하는 연간 MBtu(백만 Btu). 1 MBtu = 293.07 kWh.
 """
+import numpy as np
 import pandas as pd
 
 FT2_PER_PYEONG = 35.58
@@ -78,3 +79,51 @@ def build_table(df, max_ft2=6000):
     X["garage"] = d["geometry_garage"].fillna("None")
     X = add_derived(X)
     return X, d[TARGETS].copy()
+
+
+# ---- 재학습 실험용 데이터 분할 ----
+# 같은 데이터 파일이면 누가 돌려도 같은 분할이 나옵니다(seed 고정). 행 번호는 build_table 결과의 행 번호입니다.
+#   train   : 재학습 전 모델(v1)이 배우는 건물
+#   pool    : 서비스에 '새로 들어올' 건물. v1은 본 적이 없고, 팀원 테스트 요청과 정답(피드백)이 여기서 나옵니다
+#   holdout : 평가 전용. v1·v2 어느 쪽도 절대 학습하지 않습니다
+#   focus_* : 보고서에서 따로 보는 구간(pool/holdout 중 해당하는 건물)
+# SPLIT_SCHEME 은 팀 모두가 같아야 하므로 환경변수가 아니라 이 파일의 상수로 둡니다(바꾸면 로그를 새로 쌓아야 함).
+#   "random": 무작위 분할 (train 60 / pool 25 / holdout 15). 구간 = 30평 미만 소형 주택(서비스 주 사용자)
+#   "cold"  : 한랭 기후(6A·6B·7A·7B) 건물은 10%만 train, 60% pool, 30% holdout. 나머지 지역은 85% train, 15% holdout.
+#             '추운 지역 사용자가 갑자기 늘어난' 상황을 흉내냄. 구간 = 한랭 기후
+SPLIT_SCHEME = "random"
+COLD_ZONES = ["6A", "6B", "7A", "7B"]
+EXPERIMENT_SEED = 42
+HOLDOUT_FRAC = 0.15
+POOL_FRAC = 0.25
+SMALL_PYEONG = 30
+
+
+def experiment_split(X, scheme=None, seed=EXPERIMENT_SEED):
+    scheme = scheme or SPLIT_SCHEME
+    n = len(X)
+    rng = np.random.RandomState(seed)
+    if scheme == "random":
+        perm = rng.permutation(n)
+        n_h, n_p = int(round(n * HOLDOUT_FRAC)), int(round(n * POOL_FRAC))
+        sp = {"holdout": perm[:n_h], "pool": perm[n_h:n_h + n_p], "train": perm[n_h + n_p:]}
+        small = (X["area_pyeong"].values < SMALL_PYEONG)
+        sp["focus_label"] = f"{SMALL_PYEONG}평 미만 소형 주택"
+        in_focus = small
+    elif scheme == "cold":
+        cold_mask = X["climate_zone"].isin(COLD_ZONES).values
+        cold, warm = np.where(cold_mask)[0], np.where(~cold_mask)[0]
+        pw, pc = rng.permutation(warm), rng.permutation(cold)
+        nh_w, nh_c, np_c = int(round(len(pw) * HOLDOUT_FRAC)), int(round(len(pc) * 0.30)), int(round(len(pc) * 0.60))
+        sp = {"holdout": np.concatenate([pw[:nh_w], pc[:nh_c]]), "pool": pc[nh_c:nh_c + np_c],
+              "train": np.concatenate([pw[nh_w:], pc[nh_c + np_c:]])}
+        sp["focus_label"] = "한랭 기후(6A·6B·7A·7B)"
+        in_focus = cold_mask
+    else:
+        raise ValueError(f"알 수 없는 SPLIT_SCHEME: {scheme}")
+    for k in ("holdout", "pool", "train"):
+        sp[k] = np.sort(sp[k])
+    sp["focus_holdout"] = sp["holdout"][in_focus[sp["holdout"]]]
+    sp["focus_pool"] = sp["pool"][in_focus[sp["pool"]]]
+    sp["scheme"] = scheme
+    return sp

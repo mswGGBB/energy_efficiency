@@ -133,6 +133,10 @@ def _handle(event, info):
 
         m = ARTIFACTS[mode]["metrics"]["overall"]
         result["validation_r2"] = {"heating": round(m["heating"]["r2"], 3), "cooling": round(m["cooling"]["r2"], 3)}
+        tag = ARTIFACTS[mode].get("version_tag", "full")               # full=전체 학습, v1=재학습 전, v2=로그로 재학습 후
+        result["model_tag"] = tag
+        result["train_rows"] = ARTIFACTS[mode].get("train_rows")
+        result["log_rows"] = ARTIFACTS[mode].get("log_rows", 0)
         if mode == "simple":
             result["note"] = "간편 모드는 입력이 적어 참고용입니다(검증 R² 약 0.73). 정확한 값은 detail 모드를 사용하세요."
         info["event"] = "predict"
@@ -141,6 +145,7 @@ def _handle(event, info):
         info["validation_r2"] = result["validation_r2"]
         info["warnings"] = result.get("warnings", [])
         info["model_version"] = ARTIFACTS[mode].get("sklearn_version", "unknown")
+        info["model_tag"] = tag
         return _response(200, result)
 
     except Exception as e:  # 예상 못 한 오류

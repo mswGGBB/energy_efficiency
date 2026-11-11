@@ -12,6 +12,7 @@ on:
       - "api/**"
       - "web/**"
       - "scripts/**"
+      - "data/**"
       - "docker-compose.yml"
       - ".github/workflows/deploy.yml"
   workflow_dispatch:

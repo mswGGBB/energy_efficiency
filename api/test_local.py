@@ -58,7 +58,7 @@ fb = lambda_handler({"body": json.dumps({"feedback": {"request_id": rid, "actual
 records = [json.loads(l) for l in buf.getvalue().splitlines() if l.startswith("{")]
 pred_log = [r for r in records if r["event"] == "predict" and r["request_id"] == rid]
 fb_log = [r for r in records if r["event"] == "feedback" and r["feedback"]["request_id"] == rid]
-need = {"event", "request_id", "ts", "status", "latency_ms", "mode", "inputs", "prediction", "validation_r2", "model_version"}
+need = {"event", "request_id", "ts", "status", "latency_ms", "mode", "inputs", "prediction", "validation_r2", "model_version", "model_tag"}
 for name, passed in [("로그: 예측 기록에 필요한 필드가 모두 있음", bool(pred_log) and need <= set(pred_log[0])),
                      ("로그: 입력 27개가 그대로 기록됨", bool(pred_log) and len(pred_log[0]["inputs"]) == 27),
                      ("로그: 피드백이 같은 request_id 로 기록됨", fb["statusCode"] == 200 and len(fb_log) == 1)]:

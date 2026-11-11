@@ -115,7 +115,11 @@ document.getElementById('predictForm').addEventListener('submit', async function
       warningBox.style.display = 'block';
     }
 
-    document.getElementById('noteText').innerText = `적용 모델: ResStock ${currentMode.toUpperCase()} (단위: 연간 에너지 부하)`;
+    // 캡처·비교용: 어떤 모델(v1/v2)이 답했는지, 검증 점수, 요청번호(request_id)를 함께 표시
+    const r2 = data.validation_r2 ? ` · 검증 R² 난방 ${data.validation_r2.heating} / 냉방 ${data.validation_r2.cooling}` : '';
+    const tag = data.model_tag ? ` · 모델 ${data.model_tag}` : '';
+    const rid = data.request_id ? ` · 요청번호 ${data.request_id}` : '';
+    document.getElementById('noteText').innerText = `적용 모델: ResStock ${currentMode.toUpperCase()}${tag}${r2}${rid} (단위: 연간 에너지 부하)`;
 
   } catch (error) {
     alert("예측 요청 실패: " + error.message);
