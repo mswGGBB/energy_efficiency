@@ -4,7 +4,7 @@
 
 NREL ResStock 미국 주택 시뮬레이션 데이터(약 4.4만 건)로 건물의 연간 난방·냉방 에너지를 예측해, 20평대 소형 주택을 새로 짓거나 고쳐 쓸지 고민하는 30대 맞벌이 예비 집주인(민수 씨)이 단열·창·냉난방 설비 조건을 바꿔 가며 냉난방 부담을 미리 비교해 보도록 돕는 서비스입니다.
 
-> **현재 상태**: 모델 학습, API(로컬 테스트 16/16), 입력 화면(로컬) 완료. AWS Lambda 함수 URL 응답, CloudWatch 로그, S3 내보내기까지 확인했습니다. 지금은 Docker Compose 컨테이너화와 EC2 배포 자동화를 준비하고 있습니다.
+> **현재 상태 (2026-11-11)**: API·화면을 Docker Compose 컨테이너 2개로 묶어 **AWS EC2에서 운영** 중이며, `main`에 머지하면 **GitHub Actions가 자동 배포**합니다. 서비스 로그 1,600건으로 **재학습(v1 → v2)·재배포**까지 한 바퀴 돌렸고, 전후 비교 결과는 "유의한 개선 없음"입니다([`docs/retrain_report.md`](docs/retrain_report.md), PR #28). 이전 단계에서 AWS Lambda 함수 URL, CloudWatch 로그, S3 내보내기도 확인했습니다.
 > **주의**: 학습 데이터는 미국 주택 시뮬레이션이라, 한국 집의 실제 값이 아니라 **참고용 추정치**입니다.
 
 ## 📌 프로젝트 소개
@@ -28,6 +28,8 @@ NREL ResStock 미국 주택 시뮬레이션 데이터(약 4.4만 건)로 건물�
 | 상세 모드 | 간편 입력 + 설정온도, 기밀도, 단열 R값, 창·벽·지붕 면적 등 총 27개를 넣어 더 정확하게 예측 |
 | 경고 안내 | 학습 범위를 벗어난 값은 경고를 함께 반환하고, 평수가 학습 범위(7.7~157평) 밖이면 요청을 거절 |
 | 오류 응답 | 누락·잘못된 값은 `400`, 모델 문제는 `500` JSON으로 응답 (서버가 죽지 않음) |
+| 모델 표시 | 결과 아래에 사용한 모델 버전(`v1`/`v2`), 검증 R², 요청번호를 표시 |
+| 피드백 | 예측의 `request_id`로 실제값을 보내면 재학습 데이터로 쌓임 |
 
 ## 🔎 입력 / 출력
 
@@ -36,7 +38,7 @@ NREL ResStock 미국 주택 시뮬레이션 데이터(약 4.4만 건)로 건물�
 **출력**
 - 연간 난방 부하 `heating_mbtu_per_year`, `heating_kwh_per_year`
 - 연간 냉방 부하 `cooling_mbtu_per_year`, `cooling_kwh_per_year`
-- 사용한 모드, 경고(`warnings`), 모델 검증 점수(`validation_r2`)
+- 사용한 모드, 경고(`warnings`), 모델 검증 점수(`validation_r2`), 모델 버전(`model_tag`), 요청번호(`request_id`)
 
 1평 = 35.58 ft², 1 MBtu = 293.071 kWh로 환산합니다.
 
@@ -71,6 +73,23 @@ NREL ResStock 미국 주택 시뮬레이션 데이터(약 4.4만 건)로 건물�
 - 상세 모드 평 구간별 R²(난방/냉방): 10평대 0.892/0.871, **20평대 0.905/0.895**, 30평대 0.920/0.903, 60평 이상 0.933/0.909
 - API 경로 검증: 학습에 쓰지 않은 데이터 1,500건을 `lambda_handler`에 JSON으로 넣었을 때 상세 R² 0.939(난방)/0.911(냉방), 간편 R² 0.751/0.713. 모델 직접 계산과의 차이는 0.005 MBtu 이하
 - 자세한 결과: [`docs/resstock_results.md`](docs/resstock_results.md), [`docs/resstock_metrics.json`](docs/resstock_metrics.json)
+
+### 현재 EC2에 배포된 모델 (재학습 실험용, 태그 `v2`)
+
+재학습 효과를 공정하게 재려고 EC2 이미지는 전체 데이터가 아니라 아래 분할로 학습합니다(`scripts/resstock_prep.py`의 `experiment_split`, seed 고정). 위 표는 전체 데이터 기준이고, 아래는 평가용(holdout) 6,564채 기준입니다.
+
+| 묶음 | 건물 수 | 역할 |
+|---|---|---|
+| train | 26,258 | v1이 학습 |
+| pool | 10,940 | 서비스에 새로 들어오는 건물. 테스트 요청·피드백은 여기서만 |
+| holdout | 6,564 | 평가 전용. v1·v2 모두 학습하지 않음 |
+
+| 모델 | 학습 건수 | 상세 R² (난방/냉방) | 간편 R² (난방/냉방) |
+|---|---|---|---|
+| v1 (재학습 전) | 26,258 | 0.9371 / 0.9167 | 0.7361 / 0.7372 |
+| v2 (로그 1,600건 추가, 현재 배포) | 27,858 | 0.9365 / 0.9180 | 0.7388 / 0.7387 |
+
+R² 변화의 95% 구간이 모두 0을 포함해 **유의한 개선은 없었습니다.** 로그 건물이 학습 데이터와 분포가 거의 같고, 모델이 이미 충분히 학습된 상태였기 때문으로 판단합니다(정답을 전부 안다고 가정한 상한도 R² 약 +0.002). 자세한 내용: [`docs/retrain_report.md`](docs/retrain_report.md)
 
 ## 🔌 API
 
@@ -131,6 +150,32 @@ python api/test_local.py             # API 11건 + 피드백 오류 2건 + 로�
 
 요청마다 JSON 한 줄(`predict` / `predict_error` / `feedback`)을 남기고, Lambda에서는 CloudWatch Logs에 자동으로 쌓입니다. 예측 응답의 `request_id`로 나중에 실제값을 보내면(`{"feedback": {"request_id": ..., "actual_heating_mbtu": ..., "actual_cooling_mbtu": ...}}`) 입력·예측·정답이 이어져 재학습 데이터가 됩니다. 필드 설명, S3 내보내기 절차, 정리 방법은 [`docs/logging.md`](docs/logging.md), 형식 예시는 `docs/sample_logs.jsonl`, 변환은 `scripts/logs_to_training.py`.
 
+## 🔁 재학습 절차 (로그 → 재학습 → 재배포)
+
+```bash
+# 1) 테스트 로그 쌓기: pool 건물을 예측 요청하고 실제값(ResStock 시뮬레이션 값)을 피드백 (팀원마다 다른 --part)
+python scripts/send_test_requests.py --url http://<EC2 주소>/predict --part 1/4 --n 400
+# 2) EC2에서 로그 내보내기 (재배포하면 컨테이너 로그가 사라지므로 먼저!)
+docker compose logs --no-color api > ~/logs_v1.txt
+# 3) 로그 → 학습표 (request_id로 예측과 피드백을 이음, 중복 제거)
+python scripts/logs_to_training.py logs_v1.txt data/retrain_logs.csv.gz
+# 4) 전/후 비교 보고서 (무결성 검사, v1 vs v2, 95% 구간, 학습곡선)
+python scripts/retrain_report.py --logs data/retrain_logs.csv.gz
+# 5) data/retrain_logs.csv.gz 를 PR로 머지 → 자동 배포 시 Docker 빌드에서 v2로 학습
+# 6) 배포된 서비스 점수 재기 (배포 전 before / 배포 후 after, 같은 holdout 600채)
+python scripts/eval_service.py --url http://<EC2 주소>/predict --label after
+```
+
+- 피드백 정답은 실사용자 측정값이 아니라 **정답을 아는 팀원이 보낸 ResStock 시뮬레이션 값**입니다. 예측값을 정답으로 복사하지 않습니다.
+- `logs_v1.txt` 같은 원본 로그는 저장소에 올리지 않습니다.
+
+## 🚀 EC2 자동 배포 (GitHub Actions)
+
+- `main`에 `api/**`, `web/**`, `scripts/**`, `data/**`, `docker-compose.yml` 변경이 머지되면 `.github/workflows/deploy.yml`이 실행됩니다(수동 실행도 가능).
+- 순서: Secrets 확인 → SSH 접속 → `scripts/deploy_ec2.sh`(최신 코드 받기, `docker compose up --build -d`, 상태 확인) → 외부에서 `/health` 확인
+- 필요한 Secrets(조장 관리): `EC2_HOST`, `EC2_USER`, `EC2_SSH_KEY`. **EC2를 껐다 켜면 공인 IP가 바뀌므로 `EC2_HOST`를 새 주소로 고쳐야 합니다.** (첫 배포 실패 원인이 이것이었음)
+- 80번 포트를 다른 컨테이너가 쓰고 있으면 배포가 실패하므로, 기존 컨테이너를 정리한 뒤 다시 실행합니다.
+
 ## 🐳 컨테이너로 실행 (Docker Compose)
 
 API와 화면을 컨테이너 2개로 묶어 한 번에 실행합니다. 같은 구성을 EC2에도 그대로 씁니다.
@@ -162,7 +207,8 @@ AWS 배포 후에는 `web/app.js` 맨 위의 `API_URL`을 Lambda 함수 URL로 �
 - 데이터 처리·학습: Python, pandas, scikit-learn, joblib
 - API: AWS Lambda 호환 핸들러(`lambda_handler`), 로컬은 Flask
 - 화면: HTML, JavaScript (fetch)
-- 배포 예정: AWS Lambda(컨테이너 이미지) + 함수 URL, ECR, CloudShell에서 빌드
+- 배포·운영: Docker Compose(api + nginx web), AWS EC2, GitHub Actions(SSH 자동 배포)
+- 이전 단계: AWS Lambda(컨테이너 이미지) + 함수 URL, ECR, CloudWatch Logs, S3 내보내기
 
 ## 📁 폴더 구조
 
@@ -173,8 +219,15 @@ energy_efficiency/
 │   ├── resstock_prep.py         # 학습표 만들기 (단위 변환, 파생 변수)
 │   ├── resstock_train.py        # 학습·평가·모델 저장
 │   ├── resstock_predict.py      # 입력 검증 + 예측
-│   └── logs_to_training.py      # 내보낸 로그 -> 재학습용 표
+│   ├── logs_to_training.py      # 내보낸 로그 -> 재학습용 표
+│   ├── retrain_common.py        # 재학습 실험 공통 도구
+│   ├── send_test_requests.py    # 테스트 요청 + 피드백 보내기
+│   ├── retrain_report.py        # 재학습 전/후 비교 보고서
+│   ├── eval_service.py          # 배포된 서비스 점수 재기
+│   └── deploy_ec2.sh            # EC2 배포 스크립트 (Actions가 실행)
 ├── data/resstock_sample_v2.csv.gz   # 추출한 샘플 (학습에 사용)
+├── data/retrain_logs.csv.gz     # 서비스 로그에서 만든 재학습 데이터 1,600행
+├── .github/workflows/deploy.yml # EC2 자동 배포
 ├── models/                      # resstock_{detail,simple}.joblib
 ├── docs/                        # 결과·입력 항목 설명, 지표 JSON
 ├── api/
@@ -201,10 +254,14 @@ energy_efficiency/
 - [x] API 구현, 로컬 테스트 16/16, 검증 데이터 1,500건 확인
 - [x] 요청 로그(JSON)와 피드백 기록 구현 (로컬 확인)
 - [x] 입력 화면 (로컬에서 동작 확인)
-- [ ] AWS 배포: CloudShell 빌드 → ECR → Lambda 함수 URL
-- [ ] 배포 후 정상·오류 요청 확인과 증거 캡처
-- [ ] CloudWatch에 로그가 쌓이는지 확인, 로그 스트림 하나를 S3로 내보내기
-- [ ] 실습 후 자원 정리 (Lambda, ECR, 로그 그룹)
+- [x] AWS 배포: CloudShell 빌드 → ECR → Lambda 함수 URL
+- [x] 배포 후 정상·오류 요청 확인과 증거 캡처
+- [x] CloudWatch에 로그가 쌓이는지 확인, 로그 스트림 하나를 S3로 내보내기
+- [x] Docker Compose 컨테이너화, EC2 배포
+- [x] GitHub Actions로 EC2 자동 배포
+- [x] 서비스 로그 1,600건으로 재학습(v2)·자동 재배포, 전후 비교 (유의한 개선 없음)
+- [ ] 실습 후 자원 정리 (Lambda, ECR, 로그 그룹, S3)
+- [ ] 피드백에 출처·확정 시각 기록, 학습 데이터와 다른 분포(예: 한랭 기후)의 로그로 재학습 재시도
 - [ ] 간편 모드 정확도 개선, 공동주택 오차 개선
 
 ## 👥 팀 구성
